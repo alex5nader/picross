@@ -1,4 +1,18 @@
-use crate::Board;
+use crate::cell::CellValue;
+use crate::{Board, Cell};
+use itertools::Itertools;
+
+/// Simple syntax for creating an entire constraint group.
+#[macro_export]
+macro_rules! constraints {
+    ($([$($size:expr, $value:expr $(,)?);* $(;)?])*) => {
+        vec![$(
+            vec![$(
+                $crate::ConstraintEntry { value: $value, size: $size }
+            ),*]
+        ),*]
+    }
+}
 
 /// An entry in a constraint.
 pub struct ConstraintEntry<C> {
@@ -45,25 +59,44 @@ impl<C> Puzzle<C> {
     }
 }
 
-impl<C: Default + PartialEq> Puzzle<C> {
-    fn is_solved<'a, I: IntoIterator<Item = &'a C>>(constraint: &'a Constraint<C>, items: I) -> bool {
-        let mut items = items.into_iter();
-        for entry in constraint {
-            for _ in 0..entry.size {
-                let mut invalid = true;
-                while let Some(next) = items.next() {
-                    if *next == Default::default() {
-                        continue;
-                    }
-                    invalid = *next != entry.value;
-                    break;
+impl<C: CellValue> Puzzle<C> {
+    fn is_solved<'a, I: IntoIterator<Item = &'a Cell<C>>>(constraint: &'a Constraint<C>, cells: I) -> bool {
+        let mut groups = cells.into_iter().peekable().batching(|it| {
+            let value = loop {
+                match it.next() {
+                    None => return None, // out of cells
+                    Some(Cell::Empty) | Some(Cell::CrossedOut) => continue,
+                    Some(Cell::Filled(value)) => break value,
                 }
-                if invalid {
-                    return false;
+            };
+            let mut size = 1;
+
+            loop {
+                match it.peek() {
+                    Some(Cell::Filled(next)) if *next == *value => {
+                        it.next();
+                        size += 1
+                    }
+                    _ => break,
+                }
+            }
+
+            return Some((value, size));
+        });
+
+        let mut entries = constraint.iter().map(|c| (&c.value, c.size));
+
+        loop {
+            match (entries.next(), groups.next()) {
+                (None, None) => break true,
+                (Some(_), None) | (None, Some(_)) => break false,
+                (Some(expected), Some(actual)) => {
+                    if expected != actual {
+                        break false;
+                    }
                 }
             }
         }
-        true
     }
 
     /// Checks whether the row in `board` at `index` is valid.
@@ -80,41 +113,35 @@ impl<C: Default + PartialEq> Puzzle<C> {
     /// Assumes the board has the same width and height as this puzzle.
     pub fn is_solved_by(&self, board: &Board<C>) -> bool {
         (0..self.row_constraints.len()).all(|i| self.row_is_solved(board, i))
+            && {
+                println!();
+                true
+            }
             && (0..self.column_constraints.len()).all(|i| self.column_is_solved(board, i))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::puzzle::tests::SimpleCell::Empty;
     use crate::puzzle::ConstraintGroup;
     use crate::{Board, Puzzle};
 
     #[derive(PartialEq, Copy, Clone, Debug)]
-    enum SimpleCell {
-        Empty,
-        Full,
-    }
-    impl Default for SimpleCell {
-        fn default() -> Self {
-            Empty
-        }
-    }
+    struct SimpleCell;
 
     fn test_board() -> Board<SimpleCell> {
-        use SimpleCell::*;
+        use crate::Cell::*;
+        let filled = Filled(SimpleCell);
 
         #[rustfmt::skip]
         return Board::new_raw(vec![
-            Empty, Full,  Full,  Empty, Empty,
-            Full,  Empty, Empty, Full,  Empty,
-            Empty, Full,  Full,  Empty, Empty,
+            Empty,  filled, filled, Empty,  Empty,
+            filled, Empty,  Empty,  filled, Empty,
+            Empty,  filled, filled, Empty,  Empty,
         ], 5, 3);
     }
 
     fn test_puzzle() -> Puzzle<SimpleCell> {
-        use SimpleCell::*;
-
         fn make(constraints: Vec<Vec<(usize, SimpleCell)>>) -> ConstraintGroup<SimpleCell> {
             return constraints
                 .into_iter()
@@ -125,15 +152,15 @@ mod tests {
         #[rustfmt::skip]
         return Puzzle::new(
             make(vec![
-                vec![(2, Full)],
-                vec![(1, Full), (1, Full)],
-                vec![(2, Full)]
+                vec![(2, SimpleCell)],
+                vec![(1, SimpleCell), (1, SimpleCell)],
+                vec![(2, SimpleCell)]
             ]),
             make(vec![
-                vec![(1, Full)],
-                vec![(1, Full), (1, Full)],
-                vec![(1, Full), (1, Full)],
-                vec![(1, Full)],
+                vec![(1, SimpleCell)],
+                vec![(1, SimpleCell), (1, SimpleCell)],
+                vec![(1, SimpleCell), (1, SimpleCell)],
+                vec![(1, SimpleCell)],
                 vec![],
             ]),
         );
@@ -145,5 +172,23 @@ mod tests {
         let puzzle = test_puzzle();
 
         assert!(puzzle.is_solved_by(&board));
+    }
+
+    #[test]
+    fn check_fails() {
+        #[rustfmt::skip]
+        let board = {
+            use crate::Cell::*;
+            let filled = Filled(SimpleCell);
+
+            Board::new_raw(vec![
+                Empty,  filled, filled, Empty,  filled,
+                filled, Empty,  Empty,  filled, Empty,
+                Empty,  filled, filled, Empty,  filled,
+            ], 5, 3)
+        };
+        let puzzle = test_puzzle();
+
+        assert!(!puzzle.is_solved_by(&board));
     }
 }

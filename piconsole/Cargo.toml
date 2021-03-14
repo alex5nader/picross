@@ -1,9 +1,11 @@
 [package]
-name = "picli"
+name = "piconsole"
 version = "0.1.0"
 authors = ["Alex Habich <me@alexnader.dev>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+picore = { path = "../picore" }
+pancurses = "0.16.1"
+itertools = "0.10.0"
